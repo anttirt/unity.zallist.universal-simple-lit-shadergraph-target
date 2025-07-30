@@ -136,6 +136,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             material.SetFloat(Property.QueueOffset, 0.0f);
             material.SetFloat(Property.QueueControl, (float)BaseShaderGUI.QueueControl.Auto);
 
+#if UNITY_6000_1_OR_NEWER
+            if (IsSpacewarpSupported())
+                material.SetFloat(Property.XrMotionVectorsPass, 1.0f);
+#endif
+
             // call the full unlit material setup function
             ShaderGraphSimpleLitGUI.UpdateMaterial(material, MaterialUpdateType.CreatedNewMaterial);
         }
@@ -158,6 +163,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 
         public override void GetActiveBlocks(ref TargetActiveBlockContext context)
         {
+#if UNITY_2023_2_OR_NEWER
+            context.AddBlock(UniversalBlockFields.VertexDescription.MotionVector, target.additionalMotionVectorMode == AdditionalMotionVectorMode.Custom);
+#endif
             context.AddBlock(BlockFields.SurfaceDescription.Smoothness);
             context.AddBlock(BlockFields.SurfaceDescription.NormalOS, normalDropOffSpace == NormalDropOffSpace.Object);
             context.AddBlock(BlockFields.SurfaceDescription.NormalTS, normalDropOffSpace == NormalDropOffSpace.Tangent);
@@ -206,6 +214,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // We initialize queue control to -1 to indicate to UpdateMaterial that it needs to initialize it properly on the material.
             collector.AddFloatProperty(Property.QueueOffset, 0.0f);
             collector.AddFloatProperty(Property.QueueControl, -1.0f);
+
+#if UNITY_6000_1_OR_NEWER
+            if (IsSpacewarpSupported())
+                collector.AddFloatProperty(Property.XrMotionVectorsPass, 1.0f);
+#endif
         }
 
         public override void GetPropertiesGUI(ref TargetPropertyGUIContext context, Action onChange, Action<String> registerUndo)
@@ -332,6 +345,17 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     result.passes.Add(PassVariant(CorePasses.ShadowCaster(target), CorePragmas.DOTSInstanced));
 #endif
 
+#if UNITY_2023_2_OR_NEWER
+                if (target.alwaysRenderMotionVectors)
+                    result.customTags = string.Concat(result.customTags, " ", UniversalTarget.kAlwaysRenderMotionVectorsTag);
+                result.passes.Add(PassVariant(CorePasses.MotionVectors(target), CorePragmas.MotionVectors));
+#endif
+
+#if UNITY_6000_1_OR_NEWER
+                if (IsSpacewarpSupported())
+                    result.passes.Add(PassVariant(CorePasses.XRMotionVectors(target), CorePragmas.XRMotionVectors));
+#endif
+
                 if (target.mayWriteDepth)
 #if UNITY_2022_2_15_OR_NEWER
                     result.passes.Add(PassVariant(CorePasses.DepthOnly(target), CorePragmas.Instanced));
@@ -437,7 +461,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             }
 #endif
         }
-        #endregion
+#endregion
 
         #region Passes
         static class SimpleLitPasses
@@ -507,7 +531,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     renderStates = CoreRenderStates.UberSwitchedRenderState(target/*, blendModePreserveSpecular*/),
 #endif
                     pragmas = pragmas ?? CorePragmas.Forward,     // NOTE: SM 2.0 only GL
+#if UNITY_6000_1_OR_NEWER
+                    defines = new DefineCollection() { },
+#else
                     defines = new DefineCollection() { CoreDefines.UseFragmentFog },
+#endif
+
 #if UNITY_2022_2_OR_NEWER
                     keywords = new KeywordCollection() { keywords },
 #else
@@ -646,6 +675,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 var result = new PassDescriptor()
                 {
                     // Definition
+#if UNITY_2023_2_OR_NEWER
+                    displayName = "Universal 2D",
+#endif
                     referenceName = "SHADERPASS_2D",
                     lightMode = "Universal2D",
 
@@ -685,7 +717,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     displayName = "DepthNormals",
                     referenceName = "SHADERPASS_DEPTHNORMALS",
                     lightMode = "DepthNormals",
+#if UNITY_2023_1_OR_NEWER
+                    useInPreview = true,
+#else
                     useInPreview = false,
+#endif
 
                     // Template
                     passTemplatePath = UniversalTarget.kUberTemplatePath,
@@ -725,7 +761,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 return result;
             }
         }
-        #endregion
+#endregion
 
         #region PortMasks
         static class SimpleLitBlockMasks
@@ -766,6 +802,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 UniversalStructFields.Varyings.staticLightmapUV,
                 UniversalStructFields.Varyings.dynamicLightmapUV,
                 UniversalStructFields.Varyings.sh,
+#if UNITY_6000_0_OR_NEWER
+                UniversalStructFields.Varyings.probeOcclusion,
+#endif
                 UniversalStructFields.Varyings.fogFactorAndVertexLight, // fog and vertex lighting, vert input is dependency
                 UniversalStructFields.Varyings.shadowCoord,             // shadow coord, vert input is dependency
             };
@@ -780,6 +819,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 UniversalStructFields.Varyings.staticLightmapUV,
                 UniversalStructFields.Varyings.dynamicLightmapUV,
                 UniversalStructFields.Varyings.sh,
+#if UNITY_6000_0_OR_NEWER
+                UniversalStructFields.Varyings.probeOcclusion,
+#endif
                 UniversalStructFields.Varyings.fogFactorAndVertexLight, // fog and vertex lighting, vert input is dependency
                 UniversalStructFields.Varyings.shadowCoord,             // shadow coord, vert input is dependency
             };
@@ -798,7 +840,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 StructFields.Varyings.texCoord2,                        // LightCoord
             };
         }
-        #endregion
+#endregion
 
         #region Defines
         static class SimpleLitDefines
@@ -860,22 +902,42 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.StaticLightmap },
                 { CoreKeywordDescriptors.DynamicLightmap },
                 { CoreKeywordDescriptors.DirectionalLightmapCombined },
+#if UNITY_6000_0_OR_NEWER
+                { CoreKeywordDescriptors.UseLegacyLightmaps },
+#endif
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.LightmapBicubicSampling },
+#endif
                 { CoreKeywordDescriptors.MainLightShadows },
                 { CoreKeywordDescriptors.AdditionalLights },
                 { CoreKeywordDescriptors.AdditionalLightShadows },
                 { CoreKeywordDescriptors.ReflectionProbeBlending },
                 { CoreKeywordDescriptors.ReflectionProbeBoxProjection },
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.ReflectionProbeAtlas },
+#endif
                 { CoreKeywordDescriptors.ShadowsSoft },
+#if UNITY_2023_1
+                { CoreKeywordDescriptors.ShadowsSoftLow },
+                { CoreKeywordDescriptors.ShadowsSoftMedium },
+                { CoreKeywordDescriptors.ShadowsSoftHigh },
+#endif
                 { CoreKeywordDescriptors.LightmapShadowMixing },
                 { CoreKeywordDescriptors.ShadowsShadowmask },
                 { CoreKeywordDescriptors.DBuffer },
                 { CoreKeywordDescriptors.LightLayers },
                 { CoreKeywordDescriptors.DebugDisplay },
                 { CoreKeywordDescriptors.LightCookies },
-#if UNITY_2022_2_OR_NEWER
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.ClusterLightLoop },
+#elif UNITY_2022_2_OR_NEWER
                 { CoreKeywordDescriptors.ForwardPlus },
 #else
                 { CoreKeywordDescriptors.ClusteredRendering },
+#endif
+
+#if UNITY_2023_2_OR_NEWER
+                { CoreKeywordDescriptors.EvaluateSh },
 #endif
             };
 
@@ -893,10 +955,21 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.StaticLightmap },
                 { CoreKeywordDescriptors.DynamicLightmap },
                 { CoreKeywordDescriptors.DirectionalLightmapCombined },
+#if UNITY_6000_0_OR_NEWER
+                { CoreKeywordDescriptors.UseLegacyLightmaps },
+#endif
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.LightmapBicubicSampling },
+#endif
                 { CoreKeywordDescriptors.MainLightShadows },
                 { CoreKeywordDescriptors.ReflectionProbeBlending },
                 { CoreKeywordDescriptors.ReflectionProbeBoxProjection },
                 { CoreKeywordDescriptors.ShadowsSoft },
+#if UNITY_2023_1
+                { CoreKeywordDescriptors.ShadowsSoftLow },
+                { CoreKeywordDescriptors.ShadowsSoftMedium },
+                { CoreKeywordDescriptors.ShadowsSoftHigh },
+#endif
                 { CoreKeywordDescriptors.LightmapShadowMixing },
                 { CoreKeywordDescriptors.MixedLightingSubtractive },
                 { CoreKeywordDescriptors.DBuffer },
@@ -910,9 +983,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #endif
                 { CoreKeywordDescriptors.RenderPassEnabled },
                 { CoreKeywordDescriptors.DebugDisplay },
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.ClusterLightLoop },
+#endif
             };
         }
-        #endregion
+#endregion
 
         #region Includes
         static class SimpleLitIncludes
@@ -920,7 +996,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             const string kShadows = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl";
             const string kMetaInput = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MetaInput.hlsl";
             const string kForwardPass = "Packages/com.zallist.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitForwardPass.hlsl";
+#if UNITY_6000_1_OR_NEWER
+            const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GBufferOutput.hlsl";
+#else
             const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl";
+#endif
             const string kSimpleLitGBufferPass = "Packages/com.zallist.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitGBufferPass.hlsl";
             const string kLightingMetaPass = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/LightingMetaPass.hlsl";
             // TODO : Replace 2D for Simple one
@@ -932,6 +1012,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #if UNITY_2022_2_15_OR_NEWER
                 { CoreIncludes.DOTSPregraph },
                 { CoreIncludes.WriteRenderLayersPregraph },
+#endif
+#if UNITY_6000_1_OR_NEWER
+                { CoreIncludes.FogPregraph },
+#endif
+#if UNITY_2023_1_OR_NEWER
+                { CoreIncludes.ProbeVolumePregraph },
 #endif
                 { CoreIncludes.CorePregraph },
                 { kShadows, IncludeLocation.Pregraph },
@@ -949,6 +1035,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #if UNITY_2022_2_15_OR_NEWER
                 { CoreIncludes.DOTSPregraph },
                 { CoreIncludes.WriteRenderLayersPregraph },
+#endif
+#if UNITY_6000_1_OR_NEWER
+                { CoreIncludes.FogPregraph },
+#endif
+#if UNITY_2023_1_OR_NEWER
+                { CoreIncludes.ProbeVolumePregraph },
 #endif
                 { CoreIncludes.CorePregraph },
                 { kShadows, IncludeLocation.Pregraph },
@@ -985,7 +1077,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { k2DPass, IncludeLocation.Postgraph },
             };
         }
-        #endregion
+#endregion
     }
 
     public static class SimpleLitProperty
