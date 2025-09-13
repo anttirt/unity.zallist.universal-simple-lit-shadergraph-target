@@ -67,7 +67,7 @@ PackedVaryings vert(Attributes input)
     return packedOutput;
 }
 
-FragmentOutput frag(PackedVaryings packedInput)
+GBufferFragOutput frag(PackedVaryings packedInput)
 {
     Varyings unpacked = UnpackVaryings(packedInput);
     UNITY_SETUP_INSTANCE_ID(unpacked);
